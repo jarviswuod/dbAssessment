@@ -11,7 +11,6 @@ export default function RegisterPage() {
     password: "",
     first_name: "",
     last_name: "",
-    role_name: "user",
   });
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -28,9 +27,11 @@ export default function RegisterPage() {
       toast.success("Account created! Please log in.");
       router.push("/login");
     } catch (err: any) {
-      const msg = err.response?.data
-        ? Object.values(err.response.data).flat().join(", ")
-        : "Registration failed";
+      const errorData = err.response?.data?.error;
+      let msg = errorData?.message || "Registration failed";
+      if (errorData?.details) {
+        msg = Object.values(errorData.details).flat().join(", ");
+      }
       toast.error(msg);
     } finally {
       setLoading(false);
@@ -94,18 +95,6 @@ export default function RegisterPage() {
               minLength={8}
               className="w-full border rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-            <select
-              name="role_name"
-              value={form.role_name}
-              onChange={handleChange}
-              className="w-full border rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="user">User</option>
-              <option value="admin">Admin</option>
-            </select>
           </div>
           <button
             type="submit"

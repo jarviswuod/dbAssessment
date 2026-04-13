@@ -1,8 +1,12 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/router";
-import { useAuth } from "@/context/AuthContext";
-import { connectionService } from "@/services/api";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRequireAuth } from "@/hooks/useRequireAuth";
+import { connectionService, ConnectionInput } from "@/services/api";
+import { DB_TYPE_COLORS } from "@/constants";
 import ConnectionForm from "@/components/ConnectionForm";
+import Spinner from "@/components/Spinner";
+import EmptyState from "@/components/EmptyState";
 import toast from "react-hot-toast";
 
 interface Connection {
@@ -18,40 +22,46 @@ interface Connection {
 }
 
 export default function ConnectionsPage() {
-  const { user, loading } = useAuth();
+  const { user, ready } = useRequireAuth();
   const router = useRouter();
-  const [connections, setConnections] = useState<Connection[]>([]);
+  const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
-  const [formLoading, setFormLoading] = useState(false);
   const [testingId, setTestingId] = useState<number | null>(null);
 
-  useEffect(() => {
-    if (!loading && !user) router.replace("/login");
-  }, [user, loading, router]);
+  const { data: connections = [] } = useQuery<Connection[]>({
+    queryKey: ["connections"],
+    queryFn: async () => {
+      const res = await connectionService.list();
+      return res.data.results ?? res.data;
+    },
+    enabled: !!user,
+  });
 
-  const fetchConnections = () => {
-    connectionService.list().then((res) => {
-      setConnections(res.data.results ?? res.data);
-    });
-  };
-
-  useEffect(() => {
-    if (user) fetchConnections();
-  }, [user]);
-
-  const handleCreate = async (data: any) => {
-    setFormLoading(true);
-    try {
-      await connectionService.create({ ...data, port: parseInt(data.port) });
+  const createMutation = useMutation({
+    mutationFn: (formData: { name: string; db_type: string; host: string; port: string; username: string; password: string; database: string }) => {
+      const input: ConnectionInput = { ...formData, port: parseInt(formData.port) };
+      return connectionService.create(input);
+    },
+    onSuccess: () => {
       toast.success("Connection created");
       setShowForm(false);
-      fetchConnections();
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail || "Failed to create connection");
-    } finally {
-      setFormLoading(false);
-    }
-  };
+      queryClient.invalidateQueries({ queryKey: ["connections"] });
+    },
+    onError: (err: any) => {
+      toast.error(err.response?.data?.error?.message || "Failed to create connection");
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => connectionService.delete(id),
+    onSuccess: () => {
+      toast.success("Connection deleted");
+      queryClient.invalidateQueries({ queryKey: ["connections"] });
+    },
+    onError: () => {
+      toast.error("Failed to delete");
+    },
+  });
 
   const handleTest = async (id: number) => {
     setTestingId(id);
@@ -71,23 +81,10 @@ export default function ConnectionsPage() {
 
   const handleDelete = async (id: number) => {
     if (!confirm("Delete this connection?")) return;
-    try {
-      await connectionService.delete(id);
-      toast.success("Connection deleted");
-      fetchConnections();
-    } catch {
-      toast.error("Failed to delete");
-    }
+    deleteMutation.mutate(id);
   };
 
-  const dbTypeColors: Record<string, string> = {
-    postgres: "bg-blue-100 text-blue-800",
-    mysql: "bg-orange-100 text-orange-800",
-    mongodb: "bg-green-100 text-green-800",
-    clickhouse: "bg-yellow-100 text-yellow-800",
-  };
-
-  if (loading || !user) return null;
+  if (!ready) return <Spinner text="Loading connections..." />;
 
   return (
     <div>
@@ -105,9 +102,9 @@ export default function ConnectionsPage() {
         <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
           <h2 className="text-lg font-semibold mb-4">New Connection</h2>
           <ConnectionForm
-            onSubmit={handleCreate}
+            onSubmit={(data) => createMutation.mutate(data)}
             onCancel={() => setShowForm(false)}
-            loading={formLoading}
+            loading={createMutation.isPending}
           />
         </div>
       )}
@@ -128,7 +125,7 @@ export default function ConnectionsPage() {
               <tr key={conn.id} className="hover:bg-gray-50">
                 <td className="px-6 py-4 text-sm font-medium">{conn.name}</td>
                 <td className="px-6 py-4">
-                  <span className={`px-2 py-1 rounded text-xs font-medium ${dbTypeColors[conn.db_type] || "bg-gray-100"}`}>
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${DB_TYPE_COLORS[conn.db_type] || "bg-gray-100"}`}>
                     {conn.db_type}
                   </span>
                 </td>
@@ -159,8 +156,13 @@ export default function ConnectionsPage() {
             ))}
             {connections.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-6 py-8 text-center text-gray-400">
-                  No connections yet. Create one to get started.
+                <td colSpan={5}>
+                  <EmptyState
+                    icon="🔌"
+                    title="No connections yet"
+                    description="Add a database connection to start extracting and processing data."
+                    action={{ label: "+ New Connection", onClick: () => setShowForm(true) }}
+                  />
                 </td>
               </tr>
             )}

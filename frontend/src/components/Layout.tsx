@@ -50,9 +50,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </div>
             <div className="flex items-center space-x-4">
               <span className="text-sm text-gray-500">
-                {user.username}{" "}
+                {user?.username}{" "}
                 <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                  {user.role?.name || "user"}
+                  {user?.role?.name || "user"}
                 </span>
               </span>
               <button
@@ -71,3 +71,4 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+ 

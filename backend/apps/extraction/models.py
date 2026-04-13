@@ -4,8 +4,6 @@ from django.conf import settings
 
 class ExtractionJob(models.Model):
     STATUS_CHOICES = [
-        ("pending", "Pending"),
-        ("running", "Running"),
         ("completed", "Completed"),
         ("failed", "Failed"),
     ]
@@ -19,7 +17,8 @@ class ExtractionJob(models.Model):
     table_name = models.CharField(max_length=200)
     batch_size = models.PositiveIntegerField(default=100)
     total_rows = models.PositiveIntegerField(default=0)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="completed")
+    error_message = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

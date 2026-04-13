@@ -1,27 +1,43 @@
 import csv
-import io
 import json
+import logging
 import os
 from datetime import datetime, timezone
 
 from django.conf import settings
 from django.http import FileResponse
-from rest_framework import status
+from drf_spectacular.utils import extend_schema
+from rest_framework import generics, status
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.connections.models import ConnectionConfig
-from .models import ProcessedDataRecord, ExportedFile
+from apps.connections.connectors.factory import ConnectorFactory
+from .models import SubmitJob, ProcessedDataRecord, ExportedFile
+from .tasks import process_submit_job
 from .serializers import (
     SubmitDataSerializer,
+    SubmitJobSerializer,
+    ShareFileResponseSerializer,
     ProcessedDataRecordSerializer,
     ExportedFileSerializer,
 )
 
+logger = logging.getLogger("apps.storage")
+
 
 class SubmitDataView(APIView):
-    """Accept edited data, store in DB, and export as file."""
+    """Accept edited data, dispatch background processing job."""
 
+    @extend_schema(
+        tags=["Storage"],
+        request=SubmitDataSerializer,
+        responses={202: SubmitJobSerializer},
+        summary="Submit edited data",
+        description="Validates and stores data, then dispatches a background job to write back "
+                    "to the source database and export a file. Returns the job ID for polling.",
+    )
     def post(self, request):
         serializer = SubmitDataSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -29,17 +45,17 @@ class SubmitDataView(APIView):
         connection_id = serializer.validated_data["connection_id"]
         table_name = serializer.validated_data["table_name"]
         data = serializer.validated_data["data"]
+        original_data = serializer.validated_data.get("original_data", [])
         export_format = serializer.validated_data["export_format"]
 
         try:
             config = ConnectionConfig.objects.get(id=connection_id)
+            if config.owner != request.user and not request.user.is_admin:
+                raise PermissionDenied("Permission denied")
         except ConnectionConfig.DoesNotExist:
-            return Response(
-                {"error": "Connection not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            raise NotFound("Connection not found")
 
-        # 1. Store in DB
+        # Store data immediately (synchronous — lightweight)
         record = ProcessedDataRecord.objects.create(
             user=request.user,
             source_connection=config,
@@ -48,142 +64,162 @@ class SubmitDataView(APIView):
             data=data,
             row_count=len(data),
         )
+        # Stash original_data for the task (stored transiently on the record)
+        record._original_data = original_data
 
-        # 2. Export as file
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        file_name = f"{table_name}_{config.db_type}_{timestamp}.{export_format}"
-
-        exports_dir = settings.EXPORTS_DIR
-        os.makedirs(exports_dir, exist_ok=True)
-        file_path = os.path.join(exports_dir, file_name)
-
-        metadata = {
-            "source_db_type": config.db_type,
-            "source_table": table_name,
-            "connection_name": config.name,
-            "exported_by": request.user.username,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "row_count": len(data),
-        }
-
-        if export_format == "json":
-            output = {"metadata": metadata, "data": data}
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(output, f, indent=2, default=str)
-        else:  # csv
-            if data:
-                with open(file_path, "w", newline="", encoding="utf-8") as f:
-                    writer = csv.DictWriter(f, fieldnames=data[0].keys())
-                    writer.writeheader()
-                    writer.writerows(data)
-
-        exported_file = ExportedFile.objects.create(
+        # Create job and dispatch to Celery
+        job = SubmitJob.objects.create(
             user=request.user,
-            processed_record=record,
-            file_format=export_format,
-            file_path=file_path,
-            file_name=file_name,
-            source_db_type=config.db_type,
-            source_table=table_name,
+            connection=config,
+            table_name=table_name,
+            export_format=export_format,
+            row_count=len(data),
+            record=record,
+        )
+        process_submit_job.delay(job.id)
+
+        logger.info(
+            "action=submit_data user_id=%s job_id=%s connection_id=%s table=%s rows=%d",
+            request.user.id, job.id, config.id, table_name, len(data),
         )
 
         return Response(
-            {
-                "record_id": record.id,
-                "file_id": exported_file.id,
-                "file_name": file_name,
-                "row_count": len(data),
-                "message": "Data stored and exported successfully",
-            },
-            status=status.HTTP_201_CREATED,
+            SubmitJobSerializer(job).data,
+            status=status.HTTP_202_ACCEPTED,
         )
 
 
-class ProcessedRecordsView(APIView):
+class SubmitJobStatusView(APIView):
+    """Poll for submit job completion."""
+
+    @extend_schema(
+        tags=["Storage"],
+        responses={200: SubmitJobSerializer},
+        summary="Get submit job status",
+        description="Poll for the status of a background submit job.",
+    )
+    def get(self, request, job_id):
+        try:
+            job = SubmitJob.objects.select_related("exported_file").get(id=job_id)
+        except SubmitJob.DoesNotExist:
+            raise NotFound("Job not found")
+
+        # RBAC: owner or admin
+        if job.user != request.user and not request.user.is_admin:
+            raise PermissionDenied("Permission denied")
+
+        return Response(SubmitJobSerializer(job).data)
+
+
+class ProcessedRecordsView(generics.ListAPIView):
     """List processed data records with RBAC."""
+    serializer_class = ProcessedDataRecordSerializer
 
-    def get(self, request):
-        if request.user.is_admin:
-            records = ProcessedDataRecord.objects.all()
-        else:
-            records = ProcessedDataRecord.objects.filter(user=request.user)
+    @extend_schema(
+        tags=["Storage"],
+        summary="List processed records",
+        description="Returns all processed data records. Admins see all; users see only their own.",
+    )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
 
-        serializer = ProcessedDataRecordSerializer(records, many=True)
-        return Response(serializer.data)
+    def get_queryset(self):
+        if self.request.user.is_admin:
+            return ProcessedDataRecord.objects.select_related("user", "source_connection").all()
+        return ProcessedDataRecord.objects.select_related("user", "source_connection").filter(user=self.request.user)
 
 
-class ExportedFilesView(APIView):
+class ExportedFilesView(generics.ListAPIView):
     """List exported files with RBAC."""
+    serializer_class = ExportedFileSerializer
 
-    def get(self, request):
-        if request.user.is_admin:
-            files = ExportedFile.objects.all()
-        else:
-            files = ExportedFile.objects.filter(
-                user=request.user
-            ) | ExportedFile.objects.filter(is_shared=True)
+    @extend_schema(
+        tags=["Storage"],
+        summary="List exported files",
+        description="Returns all exported files. Admins see all; users see own files and shared files.",
+    )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
 
-        serializer = ExportedFileSerializer(files.distinct(), many=True)
-        return Response(serializer.data)
+    def get_queryset(self):
+        if self.request.user.is_admin:
+            return ExportedFile.objects.select_related("user").all()
+        return (
+            ExportedFile.objects.select_related("user").filter(user=self.request.user)
+            | ExportedFile.objects.select_related("user").filter(is_shared=True)
+        ).distinct()
 
 
 class DownloadFileView(APIView):
     """Download an exported file with RBAC check."""
 
+    @extend_schema(
+        tags=["Storage"],
+        responses={(200, "application/octet-stream"): bytes},
+        summary="Download exported file",
+        description="Download a JSON or CSV export. Admins can download any file; users can download their own or shared files.",
+    )
     def get(self, request, file_id):
         try:
             exported_file = ExportedFile.objects.get(id=file_id)
         except ExportedFile.DoesNotExist:
-            return Response(
-                {"error": "File not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            raise NotFound("File not found")
 
         # RBAC: admin sees all, user sees own or shared
         if not request.user.is_admin:
             if exported_file.user != request.user and not exported_file.is_shared:
-                return Response(
-                    {"error": "Permission denied"},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+                raise PermissionDenied("Permission denied")
 
         if not os.path.exists(exported_file.file_path):
-            return Response(
-                {"error": "File no longer exists on disk"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            raise NotFound("File no longer exists on disk")
+
+        # Prevent path traversal: ensure file is within the exports directory
+        real_path = os.path.realpath(exported_file.file_path)
+        exports_dir = os.path.realpath(str(settings.EXPORTS_DIR))
+        if not real_path.startswith(exports_dir):
+            raise PermissionDenied("Invalid file path")
+
+        logger.info("action=download_file user_id=%s file_id=%s format=%s", request.user.id, file_id, exported_file.file_format)
 
         content_type = (
             "application/json"
             if exported_file.file_format == "json"
             else "text/csv"
         )
-        return FileResponse(
-            open(exported_file.file_path, "rb"),
+        fh = open(exported_file.file_path, "rb")
+        response = FileResponse(
+            fh,
             content_type=content_type,
             as_attachment=True,
             filename=exported_file.file_name,
         )
+        response["X-Content-Length"] = os.path.getsize(exported_file.file_path)
+        return response
 
 
 class ShareFileView(APIView):
     """Toggle sharing of an exported file."""
 
+    @extend_schema(
+        tags=["Storage"],
+        request=None,
+        responses={200: ShareFileResponseSerializer},
+        summary="Toggle file sharing",
+        description="Toggle the shared status of an exported file. Only the file owner or an admin can change sharing.",
+    )
     def post(self, request, file_id):
         try:
             exported_file = ExportedFile.objects.get(id=file_id)
         except ExportedFile.DoesNotExist:
-            return Response(
-                {"error": "File not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            raise NotFound("File not found")
 
         if exported_file.user != request.user and not request.user.is_admin:
-            return Response(
-                {"error": "Permission denied"},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+            raise PermissionDenied("Permission denied")
 
         exported_file.is_shared = not exported_file.is_shared
         exported_file.save()
+        logger.info(
+            "action=share_file user_id=%s file_id=%s is_shared=%s",
+            request.user.id, file_id, exported_file.is_shared,
+        )
         return Response({"is_shared": exported_file.is_shared})

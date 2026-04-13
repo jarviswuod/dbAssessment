@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/router";
-import { useAuth } from "@/context/AuthContext";
+import { useQuery } from "@tanstack/react-query";
+import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { connectionService, extractionService, storageService } from "@/services/api";
 import EditableGrid from "@/components/EditableGrid";
 import toast from "react-hot-toast";
@@ -12,10 +13,9 @@ interface Connection {
 }
 
 export default function ExtractPage() {
-  const { user, loading } = useAuth();
+  const { user, ready } = useRequireAuth();
   const router = useRouter();
 
-  const [connections, setConnections] = useState<Connection[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<number | null>(null);
   const [tables, setTables] = useState<string[]>([]);
   const [selectedTable, setSelectedTable] = useState("");
@@ -24,27 +24,28 @@ export default function ExtractPage() {
 
   const [columns, setColumns] = useState<{ key: string; label: string }[]>([]);
   const [data, setData] = useState<Record<string, any>[]>([]);
+  const [originalData, setOriginalData] = useState<Record<string, any>[]>([]);
   const [totalRows, setTotalRows] = useState(0);
   const [extracting, setExtracting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [exportFormat, setExportFormat] = useState("json");
 
-  useEffect(() => {
-    if (!loading && !user) router.replace("/login");
-  }, [user, loading, router]);
+  const { data: connections = [] } = useQuery<Connection[]>({
+    queryKey: ["connections"],
+    queryFn: async () => {
+      const res = await connectionService.list();
+      return res.data.results ?? res.data;
+    },
+    enabled: !!user,
+  });
 
+  // Preselect connection from query param
   useEffect(() => {
-    if (user) {
-      connectionService.list().then((res) => {
-        const conns = res.data.results ?? res.data;
-        setConnections(conns);
-        const preselect = router.query.connection;
-        if (preselect) {
-          setSelectedConnection(Number(preselect));
-        }
-      });
+    const preselect = router.query.connection;
+    if (preselect && connections.length > 0) {
+      setSelectedConnection(Number(preselect));
     }
-  }, [user, router.query.connection]);
+  }, [router.query.connection, connections]);
 
   useEffect(() => {
     if (selectedConnection) {
@@ -57,6 +58,13 @@ export default function ExtractPage() {
     }
   }, [selectedConnection]);
 
+  // Auto-fetch when offset changes (pagination)
+  useEffect(() => {
+    if (data.length > 0 && selectedConnection && selectedTable) {
+      handleExtract();
+    }
+  }, [offset]);
+
   const handleExtract = async () => {
     if (!selectedConnection || !selectedTable) return;
     setExtracting(true);
@@ -68,13 +76,14 @@ export default function ExtractPage() {
         offset,
       });
       setData(result.data);
+      setOriginalData(JSON.parse(JSON.stringify(result.data)));
       setTotalRows(result.total_rows);
       setColumns(
         result.columns.map((c: string) => ({ key: c, label: c }))
       );
       toast.success(`Extracted ${result.data.length} rows`);
     } catch (err: any) {
-      toast.error(err.response?.data?.error || "Extraction failed");
+      toast.error(err.response?.data?.error?.message || "Extraction failed");
     } finally {
       setExtracting(false);
     }
@@ -88,23 +97,40 @@ export default function ExtractPage() {
     if (!selectedConnection || !selectedTable || data.length === 0) return;
     setSubmitting(true);
     try {
-      const { data: result } = await storageService.submit({
+      // 1. Dispatch background job
+      const { data: job } = await storageService.submit({
         connection_id: selectedConnection,
         table_name: selectedTable,
         data,
+        original_data: originalData,
         export_format: exportFormat,
       });
-      toast.success(
-        `Saved ${result.row_count} rows. File: ${result.file_name}`
-      );
+      toast.success(`Job #${job.id} submitted — processing...`);
+
+      // 2. Poll for completion
+      const pollInterval = 1000;
+      const maxAttempts = 60;
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise((r) => setTimeout(r, pollInterval));
+        const { data: status } = await storageService.getJobStatus(job.id);
+        if (status.status === "completed") {
+          toast.success(`Saved ${status.row_count} rows. File: ${status.file_name}`);
+          return;
+        }
+        if (status.status === "failed") {
+          toast.error(status.error_message || "Background job failed");
+          return;
+        }
+      }
+      toast.error("Job timed out — check the files page later");
     } catch (err: any) {
-      toast.error(err.response?.data?.error || "Submit failed");
+      toast.error(err.response?.data?.error?.message || "Submit failed");
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (loading || !user) return null;
+  if (!ready) return null;
 
   const hasMore = offset + batchSize < totalRows;
   const hasPrev = offset > 0;

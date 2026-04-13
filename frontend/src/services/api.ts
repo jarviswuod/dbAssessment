@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
 const api = axios.create({
   baseURL: API_URL,
@@ -47,6 +47,25 @@ api.interceptors.response.use(
 
 export default api;
 
+// ─── Types ───
+export interface ConnectionInput {
+  name: string;
+  db_type: string;
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  database: string;
+}
+
+export interface SubmitDataInput {
+  connection_id: number;
+  table_name: string;
+  data: Record<string, unknown>[];
+  original_data: Record<string, unknown>[];
+  export_format: string;
+}
+
 // ─── Auth ───
 export const authService = {
   login: (username: string, password: string) =>
@@ -58,7 +77,6 @@ export const authService = {
     password: string;
     first_name: string;
     last_name: string;
-    role_name: string;
   }) => api.post("/auth/register/", data),
 
   getProfile: () => api.get("/auth/profile/"),
@@ -67,8 +85,8 @@ export const authService = {
 // ─── Connections ───
 export const connectionService = {
   list: () => api.get("/connections/"),
-  create: (data: any) => api.post("/connections/", data),
-  update: (id: number, data: any) => api.put(`/connections/${id}/`, data),
+  create: (data: ConnectionInput) => api.post("/connections/", data),
+  update: (id: number, data: Partial<ConnectionInput>) => api.put(`/connections/${id}/`, data),
   delete: (id: number) => api.delete(`/connections/${id}/`),
   test: (id: number) => api.post(`/connections/${id}/test/`),
   getTables: (id: number) => api.get(`/connections/${id}/tables/`),
@@ -90,12 +108,8 @@ export const extractionService = {
 
 // ─── Storage ───
 export const storageService = {
-  submit: (data: {
-    connection_id: number;
-    table_name: string;
-    data: any[];
-    export_format: string;
-  }) => api.post("/storage/submit/", data),
+  submit: (data: SubmitDataInput) => api.post("/storage/submit/", data),
+  getJobStatus: (jobId: number) => api.get(`/storage/jobs/${jobId}/`),
 
   getRecords: () => api.get("/storage/records/"),
   getFiles: () => api.get("/storage/files/"),

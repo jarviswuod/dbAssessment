@@ -1,5 +1,6 @@
 from .base import BaseConnector
 from .postgres import PostgresConnector
+from .mysql import MySQLConnector
 from .mongo import MongoConnector
 from .clickhouse import ClickHouseConnector
 
@@ -9,17 +10,13 @@ class ConnectorFactory:
 
     _registry: dict[str, type[BaseConnector]] = {
         "postgres": PostgresConnector,
+        "mysql": MySQLConnector,
         "mongodb": MongoConnector,
         "clickhouse": ClickHouseConnector,
     }
 
     @classmethod
     def get(cls, db_type: str, **kwargs) -> BaseConnector:
-        if db_type == "mysql" and "mysql" not in cls._registry:
-            # Lazy import so the app can run without mysqlclient system deps.
-            from .mysql import MySQLConnector  # noqa: WPS433
-
-            cls._registry["mysql"] = MySQLConnector
         connector_cls = cls._registry.get(db_type)
         if not connector_cls:
             raise ValueError(f"Unsupported database type: {db_type}")

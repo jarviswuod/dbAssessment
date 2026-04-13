@@ -20,10 +20,10 @@ interface ConnectionFormProps {
 }
 
 const DB_TYPES = [
-  { value: "postgres", label: "PostgreSQL", defaultPort: "5432" },
-  { value: "mysql", label: "MySQL", defaultPort: "3306" },
-  { value: "mongodb", label: "MongoDB", defaultPort: "27017" },
-  { value: "clickhouse", label: "ClickHouse", defaultPort: "8123" },
+  { value: "postgres", label: "PostgreSQL", defaultPort: "5432", defaultHost: "postgres_test" },
+  { value: "mysql", label: "MySQL", defaultPort: "3306", defaultHost: "mysql_test" },
+  { value: "mongodb", label: "MongoDB", defaultPort: "27017", defaultHost: "mongo_test" },
+  { value: "clickhouse", label: "ClickHouse", defaultPort: "8123", defaultHost: "clickhouse_test" },
 ];
 
 export default function ConnectionForm({
@@ -35,7 +35,7 @@ export default function ConnectionForm({
   const [form, setForm] = React.useState<ConnectionFormData>({
     name: initialData?.name || "",
     db_type: initialData?.db_type || "postgres",
-    host: initialData?.host || "",
+    host: initialData?.host || "postgres_test",
     port: initialData?.port || "5432",
     username: initialData?.username || "",
     password: initialData?.password || "",
@@ -48,7 +48,10 @@ export default function ConnectionForm({
       const updated = { ...prev, [name]: value };
       if (name === "db_type") {
         const dbType = DB_TYPES.find((d) => d.value === value);
-        if (dbType) updated.port = dbType.defaultPort;
+        if (dbType) {
+          updated.port = dbType.defaultPort;
+          updated.host = dbType.defaultHost;
+        }
       }
       return updated;
     });
@@ -100,7 +103,7 @@ export default function ConnectionForm({
             onChange={handleChange}
             required
             className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
-            placeholder="localhost"
+            placeholder="postgres_test"
           />
         </div>
         <div>

@@ -1,0 +1,22 @@
+services:
+  backend:
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py seed_demo &&
+             python manage.py runserver 0.0.0.0:8000"
+    volumes:
+      - ./backend:/app
+
+  celery_worker:
+    command: celery -A config worker --loglevel=debug
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      target: dev
+    command: npm run dev
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next

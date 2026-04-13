@@ -22,12 +22,19 @@ class UserSerializer(serializers.ModelSerializer):
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
     role_name = serializers.ChoiceField(
-        choices=[Role.ADMIN, Role.USER], default=Role.USER, write_only=True
+        choices=[Role.ADMIN, Role.USER], default=Role.USER, write_only=True, required=False,
     )
 
     class Meta:
         model = User
         fields = ["username", "email", "password", "first_name", "last_name", "role_name"]
+
+    def validate_role_name(self, value):
+        if value == Role.ADMIN:
+            request = self.context.get("request")
+            if not request or not request.user or not request.user.is_authenticated or not request.user.is_admin:
+                raise serializers.ValidationError("Only existing admins can create admin accounts.")
+        return value
 
     def create(self, validated_data):
         role_name = validated_data.pop("role_name", Role.USER)

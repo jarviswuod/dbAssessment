@@ -2,6 +2,55 @@ from django.db import models
 from django.conf import settings
 
 
+class SubmitJob(models.Model):
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("running", "Running"),
+        ("completed", "Completed"),
+        ("failed", "Failed"),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="submit_jobs",
+    )
+    connection = models.ForeignKey(
+        "connections.ConnectionConfig",
+        on_delete=models.CASCADE,
+        related_name="submit_jobs",
+    )
+    table_name = models.CharField(max_length=200)
+    export_format = models.CharField(max_length=10)
+    row_count = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    error_message = models.TextField(blank=True, default="")
+    # Populated on completion
+    record = models.ForeignKey(
+        "storage.ProcessedDataRecord",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    exported_file = models.ForeignKey(
+        "storage.ExportedFile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    rows_updated_in_source = models.IntegerField(default=0)
+    source_update_error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "submit_jobs"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"SubmitJob {self.id} ({self.status})"
+
+
 class ProcessedDataRecord(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

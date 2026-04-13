@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/router";
-import { useAuth } from "@/context/AuthContext";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRequireAuth } from "@/hooks/useRequireAuth";
+import { DB_TYPE_COLORS } from "@/constants";
 import { storageService } from "@/services/api";
 import toast from "react-hot-toast";
 
@@ -26,24 +28,39 @@ interface ProcessedRecord {
 }
 
 export default function FilesPage() {
-  const { user, loading, isAdmin } = useAuth();
+  const { user, ready, isAdmin } = useRequireAuth();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<"files" | "records">("files");
-  const [files, setFiles] = useState<ExportedFile[]>([]);
-  const [records, setRecords] = useState<ProcessedRecord[]>([]);
 
-  useEffect(() => {
-    if (!loading && !user) router.replace("/login");
-  }, [user, loading, router]);
+  const { data: files = [] } = useQuery<ExportedFile[]>({
+    queryKey: ["files"],
+    queryFn: async () => {
+      const res = await storageService.getFiles();
+      return res.data.results ?? res.data;
+    },
+    enabled: !!user,
+  });
 
-  const fetchData = () => {
-    storageService.getFiles().then((res) => setFiles(res.data));
-    storageService.getRecords().then((res) => setRecords(res.data));
-  };
+  const { data: records = [] } = useQuery<ProcessedRecord[]>({
+    queryKey: ["records"],
+    queryFn: async () => {
+      const res = await storageService.getRecords();
+      return res.data.results ?? res.data;
+    },
+    enabled: !!user,
+  });
 
-  useEffect(() => {
-    if (user) fetchData();
-  }, [user]);
+  const shareMutation = useMutation({
+    mutationFn: (fileId: number) => storageService.shareFile(fileId),
+    onSuccess: (res) => {
+      toast.success(res.data.is_shared ? "File shared" : "File unshared");
+      queryClient.invalidateQueries({ queryKey: ["files"] });
+    },
+    onError: () => {
+      toast.error("Failed to update sharing");
+    },
+  });
 
   const handleDownload = async (file: ExportedFile) => {
     try {
@@ -63,26 +80,13 @@ export default function FilesPage() {
   };
 
   const handleShare = async (fileId: number) => {
-    try {
-      const { data } = await storageService.shareFile(fileId);
-      toast.success(data.is_shared ? "File shared" : "File unshared");
-      fetchData();
-    } catch {
-      toast.error("Failed to update sharing");
-    }
+    shareMutation.mutate(fileId);
   };
 
   const formatDate = (isoStr: string) =>
     new Date(isoStr).toLocaleString();
 
-  const dbTypeColors: Record<string, string> = {
-    postgres: "bg-blue-100 text-blue-800",
-    mysql: "bg-orange-100 text-orange-800",
-    mongodb: "bg-green-100 text-green-800",
-    clickhouse: "bg-yellow-100 text-yellow-800",
-  };
-
-  if (loading || !user) return null;
+  if (!ready) return null;
 
   return (
     <div>
@@ -131,7 +135,7 @@ export default function FilesPage() {
                     </span>
                   </td>
                   <td className="px-6 py-4">
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${dbTypeColors[f.source_db_type] || "bg-gray-100"}`}>
+                    <span className={`px-2 py-1 rounded text-xs font-medium ${DB_TYPE_COLORS[f.source_db_type] || "bg-gray-100"}`}>
                       {f.source_db_type}
                     </span>
                     <span className="ml-2 text-sm text-gray-500">{f.source_table}</span>
@@ -150,7 +154,7 @@ export default function FilesPage() {
                     >
                       Download
                     </button>
-                    {(f.username === user.username || isAdmin) && (
+                    {(f.username === user?.username || isAdmin) && (
                       <button
                         onClick={() => handleShare(f.id)}
                         className="text-sm text-purple-600 hover:text-purple-800"
@@ -191,7 +195,7 @@ export default function FilesPage() {
                 <tr key={r.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 text-sm font-mono">{r.id}</td>
                   <td className="px-6 py-4">
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${dbTypeColors[r.source_db_type] || "bg-gray-100"}`}>
+                    <span className={`px-2 py-1 rounded text-xs font-medium ${DB_TYPE_COLORS[r.source_db_type] || "bg-gray-100"}`}>
                       {r.source_db_type}
                     </span>
                   </td>

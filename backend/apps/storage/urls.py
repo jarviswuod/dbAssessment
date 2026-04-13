@@ -1,6 +1,7 @@
 from django.urls import path
 from .views import (
     SubmitDataView,
+    SubmitJobStatusView,
     ProcessedRecordsView,
     ExportedFilesView,
     DownloadFileView,
@@ -9,6 +10,7 @@ from .views import (
 
 urlpatterns = [
     path("submit/", SubmitDataView.as_view(), name="submit-data"),
+    path("jobs/<int:job_id>/", SubmitJobStatusView.as_view(), name="submit-job-status"),
     path("records/", ProcessedRecordsView.as_view(), name="processed-records"),
     path("files/", ExportedFilesView.as_view(), name="exported-files"),
     path("files/<int:file_id>/download/", DownloadFileView.as_view(), name="download-file"),

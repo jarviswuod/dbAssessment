@@ -17,14 +17,16 @@ out/
 
 # Docker
 *.log
+.env
 
 # IDE
 .vscode/
 .idea/
 
-# Media/Exports
+# Media/Exports/Logs
 backend/media/
 backend/staticfiles/
+backend/logs/
 
 # OS
 .DS_Store

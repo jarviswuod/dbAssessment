@@ -1,21 +1,19 @@
-version: "3.9"
-
 services:
   # ─── External Test Databases ───
   postgres_test:
     image: postgres:16-alpine
     container_name: postgres_test
     environment:
-      POSTGRES_USER: testuser
-      POSTGRES_PASSWORD: testpass
-      POSTGRES_DB: testdb
+      POSTGRES_USER: ${TEST_DB_USER}
+      POSTGRES_PASSWORD: ${TEST_DB_PASSWORD}
+      POSTGRES_DB: ${TEST_DB_NAME}
     ports:
       - "5433:5432"
     volumes:
       - postgres_test_data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
+      test: ["CMD-SHELL", "pg_isready -U ${TEST_DB_USER} -d ${TEST_DB_NAME}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -24,10 +22,10 @@ services:
     image: mysql:8.0
     container_name: mysql_test
     environment:
-      MYSQL_ROOT_PASSWORD: rootpass
-      MYSQL_DATABASE: testdb
-      MYSQL_USER: testuser
-      MYSQL_PASSWORD: testpass
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${TEST_DB_NAME}
+      MYSQL_USER: ${TEST_DB_USER}
+      MYSQL_PASSWORD: ${TEST_DB_PASSWORD}
     ports:
       - "3307:3306"
     volumes:
@@ -43,9 +41,9 @@ services:
     image: mongo:7
     container_name: mongo_test
     environment:
-      MONGO_INITDB_ROOT_USERNAME: testuser
-      MONGO_INITDB_ROOT_PASSWORD: testpass
-      MONGO_INITDB_DATABASE: testdb
+      MONGO_INITDB_ROOT_USERNAME: ${TEST_DB_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${TEST_DB_PASSWORD}
+      MONGO_INITDB_DATABASE: ${TEST_DB_NAME}
     ports:
       - "27018:27017"
     volumes:
@@ -61,9 +59,9 @@ services:
     image: clickhouse/clickhouse-server:latest
     container_name: clickhouse_test
     environment:
-      CLICKHOUSE_USER: testuser
-      CLICKHOUSE_PASSWORD: testpass
-      CLICKHOUSE_DB: testdb
+      CLICKHOUSE_USER: ${TEST_DB_USER}
+      CLICKHOUSE_PASSWORD: ${TEST_DB_PASSWORD}
+      CLICKHOUSE_DB: ${TEST_DB_NAME}
     ports:
       - "8124:8123"
       - "9001:9000"
@@ -81,15 +79,15 @@ services:
     image: postgres:16-alpine
     container_name: main_db
     environment:
-      POSTGRES_USER: appuser
-      POSTGRES_PASSWORD: apppass
-      POSTGRES_DB: db_assessment
+      POSTGRES_USER: ${MAIN_DB_USER}
+      POSTGRES_PASSWORD: ${MAIN_DB_PASSWORD}
+      POSTGRES_DB: ${MAIN_DB_NAME}
     ports:
       - "5434:5432"
     volumes:
       - main_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U appuser -d db_assessment"]
+      test: ["CMD-SHELL", "pg_isready -U ${MAIN_DB_USER} -d ${MAIN_DB_NAME}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -101,15 +99,18 @@ services:
       dockerfile: Dockerfile
     container_name: backend
     command: >
-      sh -c "python manage.py migrate &&
-             python manage.py seed_roles &&
-             python manage.py runserver 0.0.0.0:8000"
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py seed_demo &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 120"
     environment:
-      - DATABASE_URL=postgresql://appuser:apppass@main_db:5432/db_assessment
-      - SECRET_KEY=django-insecure-dev-key-change-in-production
-      - DEBUG=True
-      - ALLOWED_HOSTS=*
-      - CORS_ALLOWED_ORIGINS=http://localhost:3000
+      - DATABASE_URL=postgresql://${MAIN_DB_USER}:${MAIN_DB_PASSWORD}@main_db:5432/${MAIN_DB_NAME}
+      - SECRET_KEY=${SECRET_KEY}
+      - DEBUG=${DEBUG}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - FIELD_ENCRYPTION_KEY=${FIELD_ENCRYPTION_KEY}
     ports:
       - "8000:8000"
     volumes:
@@ -118,15 +119,61 @@ services:
     depends_on:
       main_db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres_test:
+        condition: service_healthy
+      mysql_test:
+        condition: service_healthy
+      mongo_test:
+        condition: service_healthy
+      clickhouse_test:
+        condition: service_healthy
+
+  # ─── Redis (Celery broker) ───
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─── Celery Worker ───
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: celery_worker
+    command: celery -A config worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://${MAIN_DB_USER}:${MAIN_DB_PASSWORD}@main_db:5432/${MAIN_DB_NAME}
+      - SECRET_KEY=${SECRET_KEY}
+      - DEBUG=${DEBUG}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - FIELD_ENCRYPTION_KEY=${FIELD_ENCRYPTION_KEY}
+    volumes:
+      - ./backend:/app
+      - backend_media:/app/media
+    depends_on:
+      main_db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   # ─── Frontend (Next.js) ───
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      target: prod
     container_name: frontend
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000/api
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
     ports:
       - "3000:3000"
     volumes:
