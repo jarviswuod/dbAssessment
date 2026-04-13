@@ -60,14 +60,14 @@ docker-compose up --build
 ```
 
 This starts:
-| Service        | Port   |
+| Service | Port |
 |----------------|--------|
-| Frontend       | 3000   |
-| Backend API    | 8000   |
-| Main DB        | 5434   |
+| Frontend | 3000 |
+| Backend API | 8000 |
+| Main DB | 5434 |
 | PostgreSQL (test) | 5433 |
-| MySQL (test)   | 3307   |
-| MongoDB (test) | 27018  |
+| MySQL (test) | 3307 |
+| MongoDB (test) | 27018 |
 | ClickHouse (test)| 8124 |
 
 ## Usage
@@ -81,23 +81,23 @@ This starts:
 
 ## API Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/register/` | Register user |
-| POST | `/api/auth/login/` | Get JWT tokens |
-| GET | `/api/auth/profile/` | Current user profile |
-| GET/POST | `/api/connections/` | List/create connections |
-| POST | `/api/connections/{id}/test/` | Test connection |
-| GET | `/api/connections/{id}/tables/` | List tables |
-| POST | `/api/extraction/extract/` | Extract data batch |
-| POST | `/api/storage/submit/` | Submit & export data |
-| GET | `/api/storage/files/` | List exported files |
-| GET | `/api/storage/files/{id}/download/` | Download file |
-| POST | `/api/storage/files/{id}/share/` | Toggle file sharing |
+| Method   | Endpoint                            | Description             |
+| -------- | ----------------------------------- | ----------------------- |
+| POST     | `/api/auth/register/`               | Register user           |
+| POST     | `/api/auth/login/`                  | Get JWT tokens          |
+| GET      | `/api/auth/profile/`                | Current user profile    |
+| GET/POST | `/api/connections/`                 | List/create connections |
+| POST     | `/api/connections/{id}/test/`       | Test connection         |
+| GET      | `/api/connections/{id}/tables/`     | List tables             |
+| POST     | `/api/extraction/extract/`          | Extract data batch      |
+| POST     | `/api/storage/submit/`              | Submit & export data    |
+| GET      | `/api/storage/files/`               | List exported files     |
+| GET      | `/api/storage/files/{id}/download/` | Download file           |
+| POST     | `/api/storage/files/{id}/share/`    | Toggle file sharing     |
 
 ## RBAC
 
-| Role | Access |
-|------|--------|
-| Admin | All connections, records, files |
-| User | Own connections, records, own + shared files |
+| Role  | Access                                       |
+| ----- | -------------------------------------------- |
+| Admin | All connections, records, files              |
+| User  | Own connections, records, own + shared files |
