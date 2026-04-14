@@ -466,7 +466,35 @@ This approach does not scale well in terms of:
 
 For a more serious production environment, I would move toward **Loki + Grafana + Prometheus** or a similar central observability stack, potentially combined with metrics and tracing.
 
-## 19. Risks, Constraints, and What I Would Change in a Larger Production System
+## 19. Writing unit tests around risk areas instead of only happy-path features
+
+### Decision
+
+I treated testing as part of the design, not just as a final checklist item. I focused tests on areas where bugs would be most damaging:
+
+- authentication
+- permission boundaries
+- extraction behavior
+- data submission rules
+- SQL injection protection
+
+### Why I chose this
+
+The assessment requires unit tests, but more importantly, this platform touches external systems and protected data. The highest-value tests are the ones that prove:
+
+- users cannot access what they should not access
+- malicious input is rejected
+- the main workflows behave predictably
+
+### Why I did not only test simple happy paths
+
+Happy-path tests are useful, but for a system like this, permission bugs and unsafe input handling are much more serious than cosmetic issues.
+
+### Trade-off
+
+This testing strategy takes more thought, but it provides better confidence in the most critical behavior.
+
+## 20. Risks, Constraints, and What I Would Change in a Larger Production System
 
 ### Security risks
 
