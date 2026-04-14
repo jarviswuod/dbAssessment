@@ -20,7 +20,7 @@ help: ## Show this help
 	@echo ""
 
 up: ## Start all services (production mode)
-	docker-compose up --build -d
+	docker compose up --build -d
 	@echo ""
 	@echo "  ✓ Services starting..."
 	@echo "  Frontend:  http://localhost:3000"
@@ -31,7 +31,7 @@ up: ## Start all services (production mode)
 	@echo "  Run 'make logs' to watch startup progress"
 
 dev: ## Start all services (dev mode with hot-reload)
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
 	@echo ""
 	@echo "  ✓ Dev services starting (hot-reload enabled)..."
 	@echo "  Frontend:  http://localhost:3000"
@@ -39,7 +39,7 @@ dev: ## Start all services (dev mode with hot-reload)
 	@echo ""
 
 prod: ## Start all services (hardened production mode)
-	docker-compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 	@echo ""
 	@echo "  ✓ Production services starting..."
 	@echo "  Frontend:  http://localhost:3000"
@@ -50,14 +50,14 @@ prod: ## Start all services (hardened production mode)
 	@echo ""
 
 down: ## Stop all services
-	docker-compose down
+	docker compose down
 
 logs: ## Tail logs from all services
-	docker-compose logs -f
+	docker compose logs -f
 
 test: ## Run backend test suite
 	cd backend && python manage.py test --verbosity 2
 
 clean: ## Remove all containers, volumes, and build cache
-	docker-compose down -v --remove-orphans
+	docker compose down -v --remove-orphans
 	docker system prune -f
